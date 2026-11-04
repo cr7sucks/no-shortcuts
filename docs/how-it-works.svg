@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 600" width="960" height="600" role="img" aria-labelledby="t d" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title id="t">How no-shortcuts works</title>
+  <desc id="d">Claude works with the skill as a guide. When it tries to finish, a scanner checks the new changes. Clean work finishes. A shortcut blocks Claude until it is fixed. After three blocks on the same issues, Claude stops and the issues are shown to you.</desc>
+  <style>
+    .bg { fill: #ffffff; }
+    .box { fill: #f6f8fa; stroke: #d0d7de; stroke-width: 1.5; }
+    .scan { fill: #fff8e6; stroke: #bf8700; stroke-width: 1.5; }
+    .good { fill: #e9f7ee; stroke: #1a7f37; stroke-width: 1.5; }
+    .bad { fill: #fdecea; stroke: #cf222e; stroke-width: 1.5; }
+    .h { fill: #1f2328; font-size: 16px; font-weight: 600; }
+    .b { fill: #57606a; font-size: 13.5px; }
+    .title { fill: #1f2328; font-size: 22px; font-weight: 700; }
+    .sub { fill: #57606a; font-size: 14px; }
+    .label { fill: #57606a; font-size: 13px; font-weight: 600; }
+    .line { stroke: #6e7781; stroke-width: 1.8; fill: none; }
+    .tip { fill: #6e7781; }
+    .lane { fill: #57606a; font-size: 12px; font-weight: 700; letter-spacing: .08em; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #0d1117; }
+      .box { fill: #161b22; stroke: #30363d; }
+      .scan { fill: #2a2110; stroke: #bb8009; }
+      .good { fill: #0f2a1a; stroke: #2ea043; }
+      .bad { fill: #301416; stroke: #da3633; }
+      .h, .title { fill: #e6edf3; }
+      .b, .sub, .label, .lane { fill: #9198a1; }
+      .line { stroke: #8b949e; }
+      .tip { fill: #8b949e; }
+    }
+  </style>
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="tip" d="M0 0 L10 5 L0 10 z"/></marker></defs>
+  <rect class="bg" width="960" height="600" rx="12"/>
+  <text class="title" x="40" y="48">How no-shortcuts works</text>
+  <text class="sub" x="40" y="73">The skill guides the judgment calls. The hook enforces what a script can check.</text>
+
+  <rect class="box" x="40" y="130" width="250" height="100" rx="10"/>
+  <text class="h" x="58" y="163">Session starts</text>
+  <text class="b" x="58" y="187">Records issues that already exist,</text>
+  <text class="b" x="58" y="207">so old work never blocks you</text>
+
+  <rect class="box" x="355" y="130" width="250" height="100" rx="10"/>
+  <text class="h" x="373" y="163">Claude writes code</text>
+  <text class="b" x="373" y="187">The skill guides what to do when</text>
+  <text class="b" x="373" y="207">a check can't honestly pass</text>
+
+  <rect class="scan" x="670" y="130" width="250" height="100" rx="10"/>
+  <text class="h" x="688" y="163">Claude tries to finish</text>
+  <text class="b" x="688" y="187">The scanner checks new changes</text>
+  <text class="b" x="688" y="207">for clear shortcuts</text>
+
+  <path class="line" marker-end="url(#a)" d="M290 180 H353"/>
+  <path class="line" marker-end="url(#a)" d="M605 180 H668"/>
+
+  <rect class="box" x="40" y="310" width="250" height="260" rx="10"/>
+  <text class="lane" x="58" y="342">WHAT GETS BLOCKED</text>
+  <text class="b" x="58" y="372">Stubs left in real code</text>
+  <text class="b" x="58" y="402">Skipped or disabled tests</text>
+  <text class="b" x="58" y="432">Deleted assertions</text>
+  <text class="b" x="58" y="462">Unexplained empty catches</text>
+  <text class="b" x="58" y="492">Blanket checker suppressions</text>
+  <text class="lane" x="58" y="530">ONLY WARNS</text>
+  <text class="b" x="58" y="552">Debug prints, placeholder text</text>
+  <rect class="bad" x="355" y="310" width="250" height="100" rx="10"/>
+  <text class="h" x="373" y="343">Blocked</text>
+  <text class="b" x="373" y="367">Claude sees the file, line and</text>
+  <text class="b" x="373" y="387">rule, and has to fix the cause</text>
+
+  <rect class="good" x="670" y="310" width="250" height="100" rx="10"/>
+  <text class="h" x="688" y="343">Clean: Claude finishes</text>
+  <text class="b" x="688" y="367">Reports what's done, how it was</text>
+  <text class="b" x="688" y="387">verified, and what isn't done</text>
+
+  <path class="line" marker-end="url(#a)" d="M795 230 V308"/>
+  <text class="label" x="805" y="274">no shortcut</text>
+  <path class="line" marker-end="url(#a)" d="M740 230 V270 H480 V308"/>
+  <text class="label" x="560" y="262">shortcut found</text>
+  <path class="line" marker-end="url(#a)" d="M430 310 V232"/>
+  <text class="label" x="362" y="274">try again</text>
+
+  <rect class="box" x="355" y="470" width="250" height="100" rx="10"/>
+  <text class="h" x="373" y="503">Still stuck after 3 blocks</text>
+  <text class="b" x="373" y="527">Claude can stop, so a session is</text>
+  <text class="b" x="373" y="547">never trapped by a bad rule</text>
+
+  <rect class="box" x="670" y="470" width="250" height="100" rx="10"/>
+  <text class="h" x="688" y="503">You see everything</text>
+  <text class="b" x="688" y="527">Unresolved issues and any waived</text>
+  <text class="b" x="688" y="547">lines are shown to you</text>
+
+  <path class="line" marker-end="url(#a)" d="M480 410 V468"/>
+  <path class="line" marker-end="url(#a)" d="M605 520 H668"/>
+</svg>
