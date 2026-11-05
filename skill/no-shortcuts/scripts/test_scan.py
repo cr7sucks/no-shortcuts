@@ -165,6 +165,42 @@ class Waivers(RepoCase):
                 self.assertFalse(scan.scan_repo(self.repo)[0].waived)
 
 
+class Languages(RepoCase):
+    CASES = [
+        ("stub", "a.luau", 'error("not implemented")\n', 'error("bad input")\n'),
+        ("stub", "a.lua", "-- TODO: implement scoring\n", "-- TODO: rename\n"),
+        ("stub", "a.go", 'panic("not implemented")\n', 'panic("bad state")\n'),
+        ("stub", "a.kt", "fun f(): Int = TODO()\n", "fun f(): Int = 1\n"),
+        ("stub", "a.swift", 'fatalError("not implemented")\n', 'fatalError("bad state")\n'),
+        ("stub", "a.java", 'throw new UnsupportedOperationException("not implemented");\n',
+         'throw new UnsupportedOperationException("read only");\n'),
+        ("silenced-error", "a.go", "_ = err\n", "return err\n"),
+        ("silenced-error", "a.rb", "x = f rescue nil\n", "x = f rescue default\n"),
+        ("test-disabled", "FooTest.java", "@Disabled\nvoid a() {}\n", "@Test\nvoid a() {}\n"),
+        ("test-disabled", "FooTest.kt", "@Ignore fun a() {}\n", "@Test fun a() {}\n"),
+        ("test-disabled", "FooTests.swift", 'throw XCTSkip("later")\n', 'XCTFail("later")\n'),
+    ]
+
+    def test_each_language_hits_and_near_miss_does_not(self):
+        for rule, name, hit, near in self.CASES:
+            with self.subTest(hit=hit):
+                self.assertIn(rule, self.rules(name, hit))
+            with self.subTest(near=near):
+                self.assertNotIn(rule, self.rules(name, near))
+
+    def test_ignored_pcall_warns(self):
+        self.assertIn("pcall-ignored", self.rules("a.luau", "pcall(save, data)\n", tier="warn"))
+
+    def test_checked_pcall_is_fine(self):
+        self.assertEqual(self.rules("b.luau", "local ok, err = pcall(save, data)\n"), set())
+
+    def test_rust_unwrap_warns_outside_tests(self):
+        self.assertIn("rust-unwrap", self.rules("a.rs", "let x = f().unwrap();\n", tier="warn"))
+
+    def test_luau_spec_files_count_as_tests(self):
+        self.assertNotIn("stub", self.rules("score_spec.lua", 'error("not implemented")\n'))
+
+
 class WeakenedTests(RepoCase):
     def changed(self, name, before, after):
         self.write(name, before)

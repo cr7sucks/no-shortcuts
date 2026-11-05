@@ -32,18 +32,20 @@ UI = {".html", ".jsx", ".tsx", ".vue", ".svelte"}
 SKIPPED_PATH = re.compile(
     r"(^|/)(node_modules|vendor|dist|build|target|\.next|__pycache__|\.venv|venv)/|\.min\.\w+$")
 TEST_PATH = re.compile(
-    r"(^|/)(tests?|__tests__|spec|specs|e2e)/|(^|/)test_[^/]+$|_test\.\w+$|\.(test|spec)\.\w+$")
+    r"(^|/)(tests?|__tests__|spec|specs|e2e)/|(^|/)test_[^/]+$|_test\.\w+$|\.(test|spec)\.\w+$"
+    r"|_spec\.(rb|lua|luau)$|[A-Z]\w*Tests?\.(java|kt|swift|cs)$")
 WAIVER = re.compile(r"no-shortcuts-ok:\s*(\S.*)$")
 DELETION_WAIVER = re.compile(r"no-shortcuts-deleted-ok:\s*(\S.*)$")
 
 STUB = re.compile(
     r"raise NotImplementedError|new Error\(\s*[\"'`]not implemented|\bunimplemented!\(|\btodo!\("
     r"|\bTODO\b[:\s-]*implement|in a real (implementation|app|application|system|project)"
-    r"|placeholder implementation", re.I)
+    r"|placeholder implementation|\b(error|panic|fatalError)\(\s*[\"'`]not implemented"
+    r"|UnsupportedOperationException\(\s*\"not implemented|\bTODO\(\)", re.I)
 TEST_DISABLED = re.compile(
     r"\b(it|test|describe)\.(skip|only)\(|\bx(it|test|describe)\(|\bf(it|describe)\("
     r"|@pytest\.mark\.(skip|xfail)\b|\bpytest\.skip\(|@unittest\.(skip|expectedFailure)\b"
-    r"|\bt\.Skip\(|#\[ignore\]|\bSkipTest\b|\.skipTest\(")
+    r"|\bt\.Skip\(|#\[ignore\]|\bSkipTest\b|\.skipTest\(|@Disabled\b|@Ignore\b|\bXCTSkip\b")
 CHECKER_TARGETED = re.compile(
     r"#\s*type:\s*ignore\[|#\s*noqa:|eslint-disable-(next-)?line\s+[@\w]")
 CHECKER = re.compile(
@@ -77,6 +79,10 @@ CI_SOFT_FAIL = re.compile(
 TEST_WORDS = re.compile(r"\btests?\b|\bspec\b|\btest_\w+|\w+\.test\.")
 NOT_A_TEST_RUN = re.compile(r"^\s*(git|echo|cat|grep|rg|ls|sed|find|head|tail)\b")
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
+GO_IGNORED_ERROR = re.compile(r"^\s*_\s*=\s*err\b")
+RUBY_RESCUE_NIL = re.compile(r"\brescue\s+nil\b")
+PCALL_IGNORED = re.compile(r"^\s*pcall\(")
+RUST_UNWRAP = re.compile(r"\.unwrap\(\)")
 AS_ANY = re.compile(r"\bas any\b")
 DEBUG_JS = re.compile(r"\bconsole\.(log|debug)\(|\bdebugger;")
 DEBUG_PY = re.compile(r"\bbreakpoint\(\)|\bpdb\.set_trace\(")
@@ -234,6 +240,12 @@ def rules_for_line(lines, index, suffix, is_test):
     silenced = silenced_error(lines, index, suffix)
     if silenced:
         yield silenced
+    if (suffix == ".go" and GO_IGNORED_ERROR.search(text)) or (suffix == ".rb" and RUBY_RESCUE_NIL.search(text)):
+        yield "silenced-error"
+    if suffix in {".lua", ".luau"} and PCALL_IGNORED.search(text):
+        yield "pcall-ignored"
+    if suffix == ".rs" and not is_test and RUST_UNWRAP.search(text):
+        yield "rust-unwrap"
     if suffix in TYPESCRIPT and AS_ANY.search(text):
         yield "as-any"
     if not is_test and ((suffix in JS_LIKE and DEBUG_JS.search(text))
