@@ -260,6 +260,13 @@ class Hook(RepoCase):
         self.hook("--session-start", {"session_id": "../../evil", "source": "startup"})
         self.assertFalse((Path(self._tmp.name) / "evil.json").exists())
 
+    def test_new_duplicate_of_preexisting_line_blocks(self):
+        self.write("a.py", "raise NotImplementedError\n")
+        self.start()
+        self.write("a.py", "raise NotImplementedError\nx = 1\nraise NotImplementedError\n")
+        out = self.hook("--stop")
+        self.assertEqual(out.returncode, 2)
+
     def test_resume_keeps_original_snapshot(self):
         self.start()
         self.write("a.py", "raise NotImplementedError\n")
@@ -309,6 +316,11 @@ class PlainFolder(RepoCase):
     def test_no_snapshot_allows(self):
         (self.plain / "new.py").write_text("raise NotImplementedError\n")
         self.assertEqual(self.stop().returncode, 0)
+
+    def test_new_duplicate_of_existing_line_blocks(self):
+        self.start()
+        (self.plain / "old.py").write_text("raise NotImplementedError\nraise NotImplementedError\n")
+        self.assertEqual(self.stop().returncode, 2)
 
     def test_oversized_folder_is_skipped_and_user_told(self):
         for number in range(6):

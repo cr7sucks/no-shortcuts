@@ -11,6 +11,7 @@ import re
 import subprocess
 import sys
 import time
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -343,6 +344,18 @@ def comparison_base(root, entry):
     return base if still_ancestor.returncode == 0 else "HEAD"
 
 
+def without_known(found, known):
+    """Each recorded issue excuses one match, so a new copy of an old line is still new."""
+    remaining = Counter(known)
+    new = []
+    for finding in found:
+        if remaining[finding.fingerprint] > 0:
+            remaining[finding.fingerprint] -= 1
+        else:
+            new.append(finding)
+    return new
+
+
 def notes_for_user(new):
     notes = [f"Waived {f.describe()} ({f.reason})" for f in new if f.waived]
     notes += [f"Warning {f.describe()}" for f in new if f.tier == "warn" and not f.waived]
@@ -363,8 +376,7 @@ def stop(payload):
         found = scan_folder(key, entry["since"])
     else:
         return 0
-    known = set(entry["known"])
-    new = [f for f in found if f.fingerprint not in known]
+    new = without_known(found, entry["known"])
     blocks = [f for f in new if f.tier == "block" and not f.waived]
     notes = notes_for_user(new)
 
