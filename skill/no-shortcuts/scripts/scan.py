@@ -55,6 +55,15 @@ PY_EXCEPT = re.compile(r"^\s*except(\s+(BaseException|Exception)(\s+as\s+\w+)?)?
 COMMENT = re.compile(r"^\s*(#|//|/\*|\*)")
 COMMENT_WORDS = re.compile(r"(#|//|/\*)\s*(.*?)\s*(\*/)?\s*(\}.*)?$")
 ASSERTION = re.compile(r"(^\s*assert\s)|\b(assert\w*|expect)\s*\(|\.should\b")
+STRICT_ASSERTION = re.compile(
+    r"assert(Equal|NotEqual|In|Raises|AlmostEqual|Greater|Less|IsNone)\w*\("
+    r"|\.(toBe|toEqual|toStrictEqual|toThrow|toContain|toHaveLength)\(|^\s*assert\s.*(==|!=|<|>|\bin\b)")
+LOOSE_ASSERTION = re.compile(
+    r"assertTrue\(|assertIsNotNone\(|\.toBeTruthy\(|\.toBeDefined\(|\.not\.toBeNull\("
+    r"|^\s*assert\s+[\w.()]+\s*(#.*)?$")
+TAUTOLOGY = re.compile(
+    r"^\s*assert\s+True\b|assertTrue\(\s*True\s*\)|expect\(\s*true\s*\)\.toBe(Truthy\(|\(\s*true\s*\))"
+    r"|^\s*assert\s+(?P<a>\d+)\s*==\s*(?P=a)\b|assertEqual\(\s*(?P<b>\d+)\s*,\s*(?P=b)\s*\)")
 AS_ANY = re.compile(r"\bas any\b")
 DEBUG_JS = re.compile(r"\bconsole\.(log|debug)\(|\bdebugger;")
 DEBUG_PY = re.compile(r"\bbreakpoint\(\)|\bpdb\.set_trace\(")
@@ -66,7 +75,7 @@ def should_block(rule, is_test_file):
 
     This sets how strict the hook feels day to day.
     """
-    return rule in {"stub", "test-disabled", "assertion-deleted",
+    return rule in {"stub", "test-disabled", "assertion-deleted", "test-tautology",
                     "silenced-error", "checker-suppressed"}
 
 
@@ -202,6 +211,8 @@ def rules_for_line(lines, index, suffix, is_test):
         yield "stub"
     if is_test and TEST_DISABLED.search(text):
         yield "test-disabled"
+    if is_test and TAUTOLOGY.search(text):
+        yield "test-tautology"
     if CHECKER_TARGETED.search(text):
         yield "suppression-targeted"
     elif CHECKER.search(text):
@@ -259,6 +270,18 @@ def deleted_assertions(added, removed):
     return found
 
 
+def weakened_assertions(added, removed):
+    """Warn when a file lost strict assertions and gained loose ones."""
+    lost = Counter(f for f, _, t in removed if TEST_PATH.search(f) and STRICT_ASSERTION.search(t))
+    found = []
+    for name, lines in added.items():
+        if not (TEST_PATH.search(name) and is_scanned(name)):
+            continue
+        loose = [(n, t) for n, t in lines if LOOSE_ASSERTION.search(t)]
+        found += [make_finding("assertion-weakened", name, n, t, True) for n, t in loose[:lost[name]]]
+    return found
+
+
 def scan_added(added):
     found = []
     for name, lines in added.items():
@@ -276,7 +299,8 @@ def scan_repo(repo, base="HEAD", head=None):
     if base == "HEAD":
         base = head_or_empty(repo)
     added, removed = collect_changes(repo, base, head)
-    return scan_added(added) + deleted_assertions(added, removed)
+    return (scan_added(added) + deleted_assertions(added, removed)
+            + weakened_assertions(added, removed))
 
 
 def code_files(root):

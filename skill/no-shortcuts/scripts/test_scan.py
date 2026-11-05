@@ -165,6 +165,51 @@ class Waivers(RepoCase):
                 self.assertFalse(scan.scan_repo(self.repo)[0].waived)
 
 
+class WeakenedTests(RepoCase):
+    def changed(self, name, before, after):
+        self.write(name, before)
+        self.commit()
+        self.write(name, after)
+        return {f.rule: f for f in scan.scan_repo(self.repo)}
+
+    def test_strict_swapped_for_loose_warns(self):
+        cases = [("test_a.py", "self.assertEqual(f(), 4)\n", "self.assertTrue(f())\n"),
+                 ("a.test.js", "expect(f()).toEqual(4);\n", "expect(f()).toBeTruthy();\n"),
+                 ("b.test.js", "expect(f()).toBe(4);\n", "expect(f()).toBeDefined();\n"),
+                 ("test_b.py", "assert f() == 4\n", "assert f()\n")]
+        for name, before, after in cases:
+            with self.subTest(after=after):
+                found = self.changed(name, before, after)
+                self.assertEqual(found["assertion-weakened"].tier, "warn")
+
+    def test_changing_expected_value_is_not_weakening(self):
+        found = self.changed("test_a.py", "self.assertEqual(f(), 4)\n", "self.assertEqual(f(), 5)\n")
+        self.assertNotIn("assertion-weakened", found)
+
+    def test_adding_a_loose_assertion_is_not_weakening(self):
+        self.write("test_a.py", "x = 1\n")
+        self.commit()
+        self.assertNotIn("assertion-weakened", self.rules("test_a.py", "x = 1\nself.assertTrue(f())\n"))
+
+    def test_tautologies_block(self):
+        for line in ("assert True\n", "self.assertTrue(True)\n", "assert 1 == 1\n",
+                     "self.assertEqual(1, 1)\n", "expect(true).toBe(true);\n"):
+            with self.subTest(line=line):
+                self.assertIn("test-tautology", self.rules("test_a.py", line, tier="block"))
+
+    def test_real_assertions_are_not_tautologies(self):
+        self.assertEqual(self.rules("test_a.py", "assert ready\nself.assertTrue(done)\nassert 1 == x\n"), set())
+
+    def test_tautology_outside_tests_ignored(self):
+        self.assertNotIn("test-tautology", self.rules("app.py", "assert True\n"))
+
+    def test_deleting_a_whole_test_file_is_caught(self):
+        self.write("test_a.py", "assert f() == 1\n")
+        self.commit()
+        (self.repo / "test_a.py").unlink()
+        self.assertTrue(any(f.rule == "assertion-deleted" for f in scan.scan_repo(self.repo)))
+
+
 class DeletionWaivers(RepoCase):
     BEFORE = "def test_a():\n    assert f() == 1\n    assert g() == 2\n"
     AFTER = "def test_a():\n    assert f() == 1\n"
