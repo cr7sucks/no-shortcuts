@@ -210,6 +210,49 @@ class WeakenedTests(RepoCase):
         self.assertTrue(any(f.rule == "assertion-deleted" for f in scan.scan_repo(self.repo)))
 
 
+class CiTampering(RepoCase):
+    WORKFLOW = ".github/workflows/ci.yml"
+
+    def test_bypassing_a_test_command_blocks(self):
+        for name, line in [("ci.sh", "python3 -m unittest -q || true\n"),
+                           (self.WORKFLOW, "      - run: npm test || true\n"),
+                           ("ci.sh", "pytest; exit 0\n"),
+                           (".gitlab-ci.yml", "  script: go test ./... || exit 0\n")]:
+            with self.subTest(line=line):
+                self.assertIn("ci-bypass", self.rules(name, line, tier="block"))
+
+    def test_unrelated_or_true_is_fine(self):
+        self.assertEqual(self.rules("ci.sh", "rm -f cache.tmp || true\npython3 -m unittest -q\n"), set())
+
+    def test_same_text_outside_ci_files_is_ignored(self):
+        self.assertEqual(self.rules("notes.yml", "run: npm test || true\n"), set())
+
+    def test_soft_failure_settings_warn(self):
+        for line in ("        continue-on-error: true\n", "  allow_failure: true\n", "set +e\n"):
+            with self.subTest(line=line):
+                name = "ci.sh" if line.startswith("set") else self.WORKFLOW
+                self.assertIn("ci-soft-fail", self.rules(name, line, tier="warn"))
+
+    def test_removing_the_test_step_blocks(self):
+        self.write(self.WORKFLOW, "steps:\n  - run: pytest -q\n  - run: ruff check\n")
+        self.commit()
+        self.assertIn("ci-step-removed", self.rules(self.WORKFLOW, "steps:\n  - run: ruff check\n", tier="block"))
+
+    def test_editing_the_test_step_is_fine(self):
+        self.write(self.WORKFLOW, "steps:\n  - run: pytest -q\n")
+        self.commit()
+        self.assertEqual(self.rules(self.WORKFLOW, "steps:\n  - run: pytest -q -x\n"), set())
+
+    def test_intended_step_removal_can_be_waived(self):
+        self.write("ci.sh", "pytest -q\nruff check\n")
+        self.commit()
+        body = "ruff check\n# no-shortcuts-deleted-ok: tests moved to the nightly job\n"
+        self.assertEqual(self.rules("ci.sh", body), set())
+
+    def test_untracked_ci_file_is_scanned(self):
+        self.assertIn("ci-bypass", self.rules(self.WORKFLOW, "- run: pytest || true\n"))
+
+
 class DeletionWaivers(RepoCase):
     BEFORE = "def test_a():\n    assert f() == 1\n    assert g() == 2\n"
     AFTER = "def test_a():\n    assert f() == 1\n"

@@ -64,6 +64,16 @@ LOOSE_ASSERTION = re.compile(
 TAUTOLOGY = re.compile(
     r"^\s*assert\s+True\b|assertTrue\(\s*True\s*\)|expect\(\s*true\s*\)\.toBe(Truthy\(|\(\s*true\s*\))"
     r"|^\s*assert\s+(?P<a>\d+)\s*==\s*(?P=a)\b|assertEqual\(\s*(?P<b>\d+)\s*,\s*(?P=b)\s*\)")
+CI_PATH = re.compile(
+    r"(^|/)\.github/workflows/[^/]+\.ya?ml$|(^|/)\.circleci/[^/]+\.ya?ml$|(^|/)\.gitlab-ci\.ya?ml$"
+    r"|(^|/)(azure|bitbucket)-pipelines\.ya?ml$|(^|/)Jenkinsfile$|(^|/)ci[\w.-]*\.sh$")
+TEST_COMMAND = re.compile(
+    r"\b(pytest|unittest|jest|vitest|mocha|rspec|go test|cargo test|(npm|pnpm|yarn)( run)? test"
+    r"|make test|gradle test|mvn test)\b|\bci\.sh\b")
+CI_BYPASS = re.compile(r"\|\|\s*(true\b|:\s*$|exit 0\b)|;\s*exit 0\b")
+CI_SOFT_FAIL = re.compile(
+    r"continue-on-error:\s*true|allow_failure:\s*true|^\s*exit 0\s*$|\bset \+e\b"
+    r"|--passWithNoTests|--exit-zero\b")
 AS_ANY = re.compile(r"\bas any\b")
 DEBUG_JS = re.compile(r"\bconsole\.(log|debug)\(|\bdebugger;")
 DEBUG_PY = re.compile(r"\bbreakpoint\(\)|\bpdb\.set_trace\(")
@@ -76,7 +86,7 @@ def should_block(rule, is_test_file):
     This sets how strict the hook feels day to day.
     """
     return rule in {"stub", "test-disabled", "assertion-deleted", "test-tautology",
-                    "silenced-error", "checker-suppressed"}
+                    "ci-bypass", "ci-step-removed", "silenced-error", "checker-suppressed"}
 
 
 @dataclass
@@ -146,7 +156,8 @@ def collect_changes(repo, base, head):
     others = git(repo, "ls-files", "--others", "--exclude-standard").stdout.splitlines()
     for name in others:
         path = Path(repo) / name
-        if path.suffix.lower() not in CODE or path.stat().st_size > MAX_FILE_BYTES:
+        wanted = path.suffix.lower() in CODE or CI_PATH.search(name)
+        if not wanted or path.stat().st_size > MAX_FILE_BYTES:
             continue
         lines = path.read_text(errors="replace").splitlines()
         added[name] = list(enumerate(lines, 1))
@@ -262,12 +273,32 @@ def deleted_assertions(added, removed):
     if surplus <= 0:
         return []
     unmatched = [item for item in gone if item[2].strip() not in new]
-    reasons = deletion_reasons(added)
     found = [make_finding("assertion-deleted", f, n, t, True) for f, n, t in unmatched[:surplus]]
+    return with_deletion_waivers(found, added)
+
+
+def with_deletion_waivers(found, added):
+    reasons = deletion_reasons(added)
     for finding in found:
         finding.reason = reasons.get(finding.file, "")
         finding.waived = bool(finding.reason)
     return found
+
+
+def removed_ci_steps(added, removed):
+    gone = [(f, n, t) for f, n, t in removed if CI_PATH.search(f) and TEST_COMMAND.search(t)]
+    kept = sum(1 for f, lines in added.items() if CI_PATH.search(f)
+               for _, t in lines if TEST_COMMAND.search(t))
+    surplus = len(gone) - kept
+    found = [make_finding("ci-step-removed", f, n, t, False) for f, n, t in gone[:max(surplus, 0)]]
+    return with_deletion_waivers(found, added)
+
+
+def ci_rules(text):
+    if TEST_COMMAND.search(text) and CI_BYPASS.search(text):
+        yield "ci-bypass"
+    if CI_SOFT_FAIL.search(text):
+        yield "ci-soft-fail"
 
 
 def weakened_assertions(added, removed):
@@ -285,6 +316,9 @@ def weakened_assertions(added, removed):
 def scan_added(added):
     found = []
     for name, lines in added.items():
+        if CI_PATH.search(name):
+            found += [make_finding(rule, name, line_no, text, False)
+                      for line_no, text in lines for rule in ci_rules(text)]
         if not is_scanned(name):
             continue
         suffix = Path(name).suffix.lower()
@@ -300,7 +334,7 @@ def scan_repo(repo, base="HEAD", head=None):
         base = head_or_empty(repo)
     added, removed = collect_changes(repo, base, head)
     return (scan_added(added) + deleted_assertions(added, removed)
-            + weakened_assertions(added, removed))
+            + weakened_assertions(added, removed) + removed_ci_steps(added, removed))
 
 
 def code_files(root):
