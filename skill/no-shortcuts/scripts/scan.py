@@ -74,6 +74,9 @@ CI_BYPASS = re.compile(r"\|\|\s*(true\b|:\s*$|exit 0\b)|;\s*exit 0\b")
 CI_SOFT_FAIL = re.compile(
     r"continue-on-error:\s*true|allow_failure:\s*true|^\s*exit 0\s*$|\bset \+e\b"
     r"|--passWithNoTests|--exit-zero\b")
+TEST_WORDS = re.compile(r"\btests?\b|\bspec\b|\btest_\w+|\w+\.test\.")
+NOT_A_TEST_RUN = re.compile(r"^\s*(git|echo|cat|grep|rg|ls|sed|find|head|tail)\b")
+EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 AS_ANY = re.compile(r"\bas any\b")
 DEBUG_JS = re.compile(r"\bconsole\.(log|debug)\(|\bdebugger;")
 DEBUG_PY = re.compile(r"\bbreakpoint\(\)|\bpdb\.set_trace\(")
@@ -431,6 +434,45 @@ def without_known(found, known):
     return new
 
 
+def tool_uses(transcript_path):
+    with open(transcript_path, errors="replace") as log:
+        for line in log:
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            content = (event.get("message") or {}).get("content")
+            if event.get("type") == "assistant" and isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "tool_use":
+                        yield block.get("name"), block.get("input") or {}
+
+
+def looks_like_test_run(command):
+    if NOT_A_TEST_RUN.search(command):
+        return False
+    return bool(TEST_COMMAND.search(command) or TEST_WORDS.search(command))
+
+
+def tests_are_stale(transcript_path):
+    """True when code was edited and no test command ran after the last edit."""
+    if not transcript_path or not Path(transcript_path).exists():
+        return False
+    last_edit = last_test = -1
+    for index, (tool, details) in enumerate(tool_uses(transcript_path)):
+        if tool in EDIT_TOOLS and Path(details.get("file_path", "")).suffix.lower() in CODE:
+            last_edit = index
+        elif tool == "Bash" and looks_like_test_run(details.get("command", "")):
+            last_test = index
+    return last_edit > last_test
+
+
+def project_has_tests(root):
+    tracked = git(root, "ls-files", check=False).stdout.splitlines() if repo_root(root) else []
+    names = tracked or (relative for _, relative in code_files(root))
+    return any(TEST_PATH.search(name) for name in names)
+
+
 def notes_for_user(new):
     notes = [f"Waived {f.describe()} ({f.reason})" for f in new if f.waived]
     notes += [f"Warning {f.describe()}" for f in new if f.tier == "warn" and not f.waived]
@@ -454,6 +496,8 @@ def stop(payload):
     new = without_known(found, entry["known"])
     blocks = [f for f in new if f.tier == "block" and not f.waived]
     notes = notes_for_user(new)
+    if tests_are_stale(payload.get("transcript_path")) and project_has_tests(key):
+        notes.append("Warning: code was edited and the tests weren't run afterward.")
 
     if not blocks:
         entry.pop("guard", None)

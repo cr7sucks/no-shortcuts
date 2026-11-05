@@ -400,6 +400,67 @@ class Hook(RepoCase):
         self.assertEqual(self.hook("--stop").returncode, 2)
 
 
+class TestsRan(RepoCase):
+    def setUp(self):
+        super().setUp()
+        self.write("test_a.py", "assert f() == 1\n")
+        self.commit()
+        self.log = Path(self._tmp.name) / "session.jsonl"
+
+    def transcript(self, *steps):
+        lines = []
+        for name, value in steps:
+            key = "command" if name == "Bash" else "file_path"
+            lines.append(json.dumps({"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "name": name, "input": {key: value}}]}}))
+        self.log.write_text("\n".join(lines) + "\n")
+
+    def stop_message(self):
+        self.hook("--session-start", {"source": "startup"})
+        out = self.hook("--stop", {"transcript_path": str(self.log)})
+        self.assertEqual(out.returncode, 0)
+        return out.stdout
+
+    def test_code_edit_without_tests_warns(self):
+        self.transcript(("Edit", "/p/app.py"))
+        self.assertIn("tests", self.stop_message())
+
+    def test_tests_run_after_edit_is_quiet(self):
+        self.transcript(("Edit", "/p/app.py"), ("Bash", "python3 -m pytest -q"))
+        self.assertEqual(self.stop_message(), "")
+
+    def test_tests_run_only_before_last_edit_warns(self):
+        self.transcript(("Bash", "pytest"), ("Write", "/p/app.py"))
+        self.assertIn("tests", self.stop_message())
+
+    def test_custom_test_script_counts(self):
+        self.transcript(("Edit", "/p/app.py"), ("Bash", "python3 test_scan.py"))
+        self.assertEqual(self.stop_message(), "")
+
+    def test_mentioning_tests_in_a_commit_does_not_count(self):
+        self.transcript(("Edit", "/p/app.py"), ("Bash", "git commit -m 'add tests'"))
+        self.assertIn("tests", self.stop_message())
+
+    def test_docs_only_edit_is_quiet(self):
+        self.transcript(("Edit", "/p/README.md"))
+        self.assertEqual(self.stop_message(), "")
+
+    def test_project_without_tests_is_quiet(self):
+        (self.repo / "test_a.py").unlink()
+        self.commit()
+        self.transcript(("Edit", "/p/app.py"))
+        self.assertEqual(self.stop_message(), "")
+
+    def test_missing_log_is_quiet(self):
+        self.assertEqual(self.stop_message(), "")
+
+    def test_broken_log_lines_are_ignored(self):
+        self.transcript(("Edit", "/p/app.py"))
+        with self.log.open("a") as log:
+            log.write("not json\n")
+        self.assertIn("tests", self.stop_message())
+
+
 class PlainFolder(RepoCase):
     """Projects with no git history."""
 
