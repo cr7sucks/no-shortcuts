@@ -34,6 +34,7 @@ SKIPPED_PATH = re.compile(
 TEST_PATH = re.compile(
     r"(^|/)(tests?|__tests__|spec|specs|e2e)/|(^|/)test_[^/]+$|_test\.\w+$|\.(test|spec)\.\w+$")
 WAIVER = re.compile(r"no-shortcuts-ok:\s*(\S.*)$")
+DELETION_WAIVER = re.compile(r"no-shortcuts-deleted-ok:\s*(\S.*)$")
 
 STUB = re.compile(
     r"raise NotImplementedError|new Error\(\s*[\"'`]not implemented|\bunimplemented!\(|\btodo!\("
@@ -217,11 +218,22 @@ def rules_for_line(lines, index, suffix, is_test):
         yield "ui-placeholder"
 
 
-def valid_waiver(text):
-    match = WAIVER.search(text)
+def valid_waiver(text, marker=WAIVER):
+    match = marker.search(text)
     if match and len(match[1].split()) >= 2:
         return match[1].strip()
     return ""
+
+
+def deletion_reasons(added):
+    """Deleted lines have nowhere to hold a waiver, so a new line in the same file carries it."""
+    reasons = {}
+    for name, lines in added.items():
+        for _, text in lines:
+            reason = valid_waiver(text, DELETION_WAIVER)
+            if reason:
+                reasons.setdefault(name, reason)
+    return reasons
 
 
 def make_finding(rule, name, line, text, is_test):
@@ -239,7 +251,12 @@ def deleted_assertions(added, removed):
     if surplus <= 0:
         return []
     unmatched = [item for item in gone if item[2].strip() not in new]
-    return [make_finding("assertion-deleted", f, n, t, True) for f, n, t in unmatched[:surplus]]
+    reasons = deletion_reasons(added)
+    found = [make_finding("assertion-deleted", f, n, t, True) for f, n, t in unmatched[:surplus]]
+    for finding in found:
+        finding.reason = reasons.get(finding.file, "")
+        finding.waived = bool(finding.reason)
+    return found
 
 
 def scan_added(added):
@@ -405,7 +422,9 @@ def stop(payload):
     lines = "\n".join(f.describe() for f in blocks)
     print(f"no-shortcuts found shortcuts in code changed this session:\n{lines}\n"
           "Fix the cause. If a hit is truly correct as written, add "
-          "`no-shortcuts-ok: <reason>` on that line and tell the user why.", file=sys.stderr)
+          "`no-shortcuts-ok: <reason>` on that line and tell the user why. For a test "
+          "deletion that is truly intended, add a comment in that file with "
+          "`no-shortcuts-deleted-ok: <reason>`.", file=sys.stderr)
     return 2
 
 

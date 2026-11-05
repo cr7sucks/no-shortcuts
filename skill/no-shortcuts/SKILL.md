@@ -35,7 +35,7 @@ Never change a test, CI script or check so it reports success while the behavior
 
 ## When the scanner hook blocks you
 
-Fix the cause. Add `no-shortcuts-ok: <reason>` to a line only when the code is truly correct as written. The reason needs at least two words, and the user sees every waiver.
+Fix the cause. Add `no-shortcuts-ok: <reason>` to a line only when the code is truly correct as written. The reason needs at least two words, and the user sees every waiver. For a truly intended test deletion, add a comment in that test file with `no-shortcuts-deleted-ok: <reason>`.
 
 ## Finish report
 

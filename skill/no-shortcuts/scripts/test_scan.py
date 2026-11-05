@@ -165,6 +165,44 @@ class Waivers(RepoCase):
                 self.assertFalse(scan.scan_repo(self.repo)[0].waived)
 
 
+class DeletionWaivers(RepoCase):
+    BEFORE = "def test_a():\n    assert f() == 1\n    assert g() == 2\n"
+    AFTER = "def test_a():\n    assert f() == 1\n"
+
+    def setUp(self):
+        super().setUp()
+        self.write("test_a.py", self.BEFORE)
+        self.commit()
+
+    def deleted(self, body):
+        self.write("test_a.py", body)
+        return [f for f in scan.scan_repo(self.repo) if f.rule == "assertion-deleted"]
+
+    def test_reasoned_marker_waives_and_keeps_reason(self):
+        found = self.deleted(self.AFTER + "# no-shortcuts-deleted-ok: feature removed from the product\n")
+        self.assertTrue(found[0].waived)
+        self.assertIn("feature removed", found[0].reason)
+
+    def test_marker_without_reason_does_not_waive(self):
+        for mark in ("# no-shortcuts-deleted-ok:\n", "# no-shortcuts-deleted-ok: fine\n"):
+            with self.subTest(mark=mark):
+                self.assertFalse(self.deleted(self.AFTER + mark)[0].waived)
+
+    def test_ordinary_waiver_does_not_excuse_a_deletion(self):
+        found = self.deleted(self.AFTER + "# no-shortcuts-ok: feature removed from the product\n")
+        self.assertFalse(found[0].waived)
+
+    def test_marker_in_another_file_does_not_waive(self):
+        self.write("test_b.py", "# no-shortcuts-deleted-ok: feature removed from the product\n")
+        self.assertFalse(self.deleted(self.AFTER)[0].waived)
+
+    def test_old_marker_does_not_waive_a_later_deletion(self):
+        self.write("test_a.py", self.BEFORE + "# no-shortcuts-deleted-ok: feature removed from the product\n")
+        self.commit()
+        found = self.deleted(self.AFTER + "# no-shortcuts-deleted-ok: feature removed from the product\n")
+        self.assertFalse(found[0].waived)
+
+
 class Hook(RepoCase):
     def start(self):
         return self.hook("--session-start", {"source": "startup"})
