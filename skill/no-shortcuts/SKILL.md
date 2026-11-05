@@ -30,7 +30,7 @@ Never change a test, CI script or check so it reports success while the behavior
 ## Before writing (research-based, not pressure-tested)
 
 1. Read the code around the change and search for existing helpers.
-2. Confirm every API, flag and package exists. Check the registry before installing anything.
+2. Confirm every API, flag and package exists.
 3. Fake or sample data is allowed only when visibly labeled in the output and named in your report.
 
 ## When the scanner hook blocks you

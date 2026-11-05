@@ -20,7 +20,10 @@ class Installer(unittest.TestCase):
     def test_fresh_install_adds_skill_and_hooks(self):
         install.install(self.claude)
         self.assertTrue((self.claude / "skills/no-shortcuts/scripts/scan.py").exists())
-        self.assertEqual(sorted(self.read()["hooks"]), ["SessionStart", "Stop"])
+        hooks = self.read()["hooks"]
+        self.assertEqual(sorted(hooks), ["PreToolUse", "SessionStart", "Stop"])
+        self.assertEqual(hooks["PreToolUse"][0]["matcher"], "Bash")
+        self.assertTrue((self.claude / "skills/no-shortcuts/scripts/check_packages.py").exists())
 
     def test_existing_settings_and_hooks_are_kept(self):
         mine = {"hooks": [{"type": "command", "command": "echo mine"}]}
@@ -33,6 +36,12 @@ class Installer(unittest.TestCase):
 
     def test_installing_twice_does_not_duplicate_hooks(self):
         install.install(self.claude)
+        install.install(self.claude)
+        self.assertEqual(len(self.read()["hooks"]["Stop"]), 1)
+
+    def test_upgrading_an_older_install_replaces_its_hooks(self):
+        old = {"hooks": [{"type": "command", "command": 'python3 "$HOME/.claude/skills/no-shortcuts/scripts/scan.py" --stop'}]}
+        self.settings.write_text(json.dumps({"hooks": {"Stop": [old]}}))
         install.install(self.claude)
         self.assertEqual(len(self.read()["hooks"]["Stop"]), 1)
 
