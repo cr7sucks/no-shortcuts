@@ -27,6 +27,11 @@ class Parsing(unittest.TestCase):
         ("poetry add pandas", [(PYPI, "pandas")]),
         ("cd api && npm install cors && npm test", [(NPM, "cors")]),
         ("FOO=1 sudo pip install black", [(PYPI, "black")]),
+        ("npm install left-pad 2>&1", [(NPM, "left-pad")]),
+        ("npm install left-pad > out.log 2>&1", [(NPM, "left-pad")]),
+        ("pip install rich 2>/dev/null", [(PYPI, "rich")]),
+        ("npm install left-pad &", [(NPM, "left-pad")]),
+        ("npm i left-pad 2>&1 | tail -3", [(NPM, "left-pad")]),
     ]
     NOT_CHECKED = [
         "npm install", "npm ci", "npm test", "pip install -r requirements.txt", "pip install .",

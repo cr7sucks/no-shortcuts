@@ -31,6 +31,7 @@ SEGMENT_SPLIT = re.compile(r"&&|\|\||;|\||\n")
 ENV_ASSIGNMENT = re.compile(r"^\w+=")
 WAIVER = re.compile(r"#\s*no-shortcuts-ok:\s*(\S.*)$")
 LOCAL_ARCHIVE = re.compile(r"\.(whl|tgz|tar\.gz|zip)$")
+SHELL_REDIRECT = re.compile(r"^\d*[<>&]")
 PYPI_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
@@ -67,6 +68,8 @@ def segment_packages(words):
             return []
         found, skip_next = [], False
         for arg in args:
+            if SHELL_REDIRECT.match(arg):
+                break
             if skip_next:
                 skip_next = False
             elif arg in FLAGS_WITH_VALUE:
