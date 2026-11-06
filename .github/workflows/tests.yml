@@ -30,4 +30,5 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: python skill/no-shortcuts/scripts/test_scan.py
       - run: python skill/no-shortcuts/scripts/test_check_packages.py
+      - run: python skill/no-shortcuts/scripts/test_bridge.py
       - run: python test_install.py

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Install or remove the no-shortcuts skill and hooks for Claude Code.
+"""Install or remove the no-shortcuts skill and hooks.
 
-    python3 install.py              install
-    python3 install.py --uninstall  remove
+    python3 install.py                        install for Claude Code
+    python3 install.py --agents cursor,codex  also add hooks for Cursor and Codex
+    python3 install.py --uninstall            remove from all of them
 """
 import json
 import shutil
@@ -19,7 +20,9 @@ def hook(script, mode=""):
 
 
 def is_ours(entry):
-    return any(MARKER in item.get("command", "") for item in entry.get("hooks", []))
+    commands = [entry.get("command", "")]
+    commands += [item.get("command", "") for item in entry.get("hooks", [])]
+    return any(MARKER in command for command in commands)
 
 
 def load_settings(path):
@@ -40,17 +43,53 @@ def save_settings(path, settings):
 
 def remove_hooks(settings):
     hooks = settings.get("hooks", {})
-    for event in ("PreToolUse", "SessionStart", "Stop"):
-        if event in hooks:
-            hooks[event] = [entry for entry in hooks[event] if not is_ours(entry)]
-            if not hooks[event]:
-                del hooks[event]
+    for event in list(hooks):
+        hooks[event] = [entry for entry in hooks[event] if not is_ours(entry)]
+        if not hooks[event]:
+            del hooks[event]
     return settings
 
 
-def install(claude_dir):
+def add_cursor_hooks(settings, command):
+    settings.setdefault("version", 1)
+    hooks = settings.setdefault("hooks", {})
+    for event, step in (("sessionStart", "session-start"), ("beforeShellExecution", "shell"),
+                        ("stop", "stop")):
+        hooks.setdefault(event, []).append({"command": f"{command} {step}", "timeout": 30})
+
+
+def add_codex_hooks(settings, command):
+    def entry(step):
+        return {"hooks": [{"type": "command", "command": f"{command} {step}", "timeout": 30}]}
+    hooks = settings.setdefault("hooks", {})
+    hooks.setdefault("SessionStart", []).append(entry("session-start"))
+    hooks.setdefault("PreToolUse", []).append({"matcher": "Bash", **entry("pre-tool")})
+    hooks.setdefault("Stop", []).append(entry("stop"))
+
+
+AGENTS = {
+    "cursor": (".cursor/hooks.json", add_cursor_hooks, ""),
+    "codex": (".codex/hooks.json", add_codex_hooks,
+              "Codex skips new hooks until you trust them: run /hooks in Codex."),
+}
+
+
+def agents_from(argv):
+    if "--agents" not in argv:
+        return []
+    names = argv[argv.index("--agents") + 1].split(",")
+    unknown = [name for name in names if name not in AGENTS]
+    if unknown:
+        sys.exit(f"Unknown agent: {', '.join(unknown)}. Choose from {', '.join(AGENTS)}.")
+    return names
+
+
+def install(claude_dir, agents=(), home=None):
+    home = home or claude_dir.parent
     settings_path = claude_dir / "settings.json"
     settings = remove_hooks(load_settings(settings_path))
+    # Read every config first, so a broken one stops the install before anything changes.
+    others = {name: remove_hooks(load_settings(home / AGENTS[name][0])) for name in agents}
     target = claude_dir / "skills" / "no-shortcuts"
     if target.exists():
         shutil.rmtree(target)
@@ -60,12 +99,23 @@ def install(claude_dir):
     hooks.setdefault("SessionStart", []).append(hook("scan.py", "--session-start"))
     hooks.setdefault("Stop", []).append(hook("scan.py", "--stop"))
     save_settings(settings_path, settings)
-    print("Installed. It takes effect in your next Claude Code session.")
+    bridge = (target / "scripts" / "bridge.py").as_posix()
+    for name, config in others.items():
+        path, add_hooks, note = AGENTS[name]
+        add_hooks(config, f'python3 "{bridge}" {name}')
+        save_settings(home / path, config)
+        if note:
+            print(note)
+    print("Installed. It takes effect in your next session.")
 
 
-def uninstall(claude_dir):
+def uninstall(claude_dir, home=None):
+    home = home or claude_dir.parent
     settings_path = claude_dir / "settings.json"
     save_settings(settings_path, remove_hooks(load_settings(settings_path)))
+    for path, _, _ in AGENTS.values():
+        if (home / path).exists():
+            save_settings(home / path, remove_hooks(load_settings(home / path)))
     shutil.rmtree(claude_dir / "skills" / "no-shortcuts", ignore_errors=True)
     shutil.rmtree(claude_dir / "no-shortcuts-state", ignore_errors=True)
     print("Removed.")
@@ -73,4 +123,4 @@ def uninstall(claude_dir):
 
 if __name__ == "__main__":
     home = Path.home() / ".claude"
-    uninstall(home) if "--uninstall" in sys.argv else install(home)
+    uninstall(home) if "--uninstall" in sys.argv else install(home, agents_from(sys.argv))
