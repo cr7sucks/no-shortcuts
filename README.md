@@ -7,7 +7,7 @@ A [Claude Code](https://code.claude.com/docs) skill and blocking hook that stop 
 A skill alone is only text Claude can skip. So this has two parts:
 
 - **The skill** handles judgment, such as what to do when a check can't honestly pass.
-- **The hook** runs a scanner every time Claude tries to finish. It can't be skipped by forgetting, and it refuses to let Claude stop while new shortcuts are in the code.
+- **The hooks** can't be skipped by forgetting. A scanner runs every time Claude tries to finish and refuses to let it stop while new shortcuts are in the code. A second check runs before package installs and stops names that don't exist.
 
 ## Install
 
@@ -34,12 +34,17 @@ python3 install.py --uninstall
 | Rule | Example |
 |---|---|
 | Stubs in real code | `raise NotImplementedError`, `throw new Error("not implemented")`, `TODO: implement` |
-| Disabled tests | `it.skip(`, `.only(`, `@pytest.mark.skip`, `unittest.SkipTest`, `self.skipTest(` |
+| Disabled tests | `it.skip(`, `.only(`, `@pytest.mark.skip`, `unittest.SkipTest`, `self.skipTest(`, `@Disabled`, `XCTSkip` |
+| Tests that can't fail | `assert True`, `expect(true).toBe(true)` |
 | Deleted assertions | More assertions removed than added |
-| Silenced errors | Empty `catch {}`, `except: pass`, `.catch(() => {})` |
+| CI bypasses | `pytest \|\| true`, `npm test; exit 0`, a removed test step |
+| Silenced errors | Empty `catch {}`, `except: pass`, `.catch(() => {})`, Go's `_ = err`, Ruby's `rescue nil` |
 | Blanket suppressions | `@ts-ignore`, `eslint-disable`, bare `# type: ignore` or `# noqa` |
+| Fake packages | `npm install` or `pip install` of a name missing from the public registry |
 
-**Only warns:** targeted suppressions like `# noqa: F401`, empty catches with a stated reason, `as any`, debug prints, and placeholder text in UI files.
+**Only warns:** assertions swapped for looser ones, CI settings like `continue-on-error: true`, code edited with no test run afterward, targeted suppressions like `# noqa: F401`, empty catches with a stated reason, ignored `pcall` results in Luau, Rust's `.unwrap()`, `as any`, debug prints, and placeholder text in UI files.
+
+Patterns cover Python, JavaScript and TypeScript, plus common cases in Go, Rust, Java, Kotlin, Swift, Ruby, Lua and Luau.
 
 The scanner only looks at code changed since the session started, so existing code never blocks you. It works with or without git. Without git it checks whole changed files and can't detect deleted assertions.
 
@@ -50,6 +55,14 @@ Add a waiver with a reason of at least two words on that line. Waived lines are 
 ```python
 raise NotImplementedError  # no-shortcuts-ok: abstract method, subclasses override
 ```
+
+A deleted line has nowhere to hold a waiver, so an intended test deletion or removed CI step takes a comment in that same file:
+
+```python
+# no-shortcuts-deleted-ok: feature removed, its tests went with it
+```
+
+A package from a private registry can be waived the same way, by adding `# no-shortcuts-ok: <reason>` to the install command. Projects with `registry=` in `.npmrc`, or with `PIP_INDEX_URL` set, skip the package check.
 
 If Claude is blocked 3 times on the same issues, it's allowed to stop and the unresolved issues are shown to you, so a bad rule can't trap a session.
 
@@ -71,12 +84,16 @@ Six pressure scenarios ran without the skill. Five stayed clean, including 36 te
 - **The slop checklists are unproven:** no run produced slop, so `code-slop.md` and `ui-slop.md` are research-based guidance and are not enforced.
 - **Not tamper-proof:** Claude can edit files, so it could write a waiver or change the hook. Waivers are shown to you; a hook edit wouldn't be.
 - **Pattern matching only:** the scanner finds clear shortcuts, not bad design.
+- **Existing doesn't mean safe:** the package check only proves a name exists. Attackers register names that AI tools tend to invent, so still review unfamiliar packages. If the registry can't be reached, the install goes ahead and you're told.
+- **Some languages are lighter:** only the patterns listed above are covered, and Luau and the other newer rules have seen far less testing.
 - **Skipped folders:** your home folder, and non-git folders with more than 5,000 code files.
 
 ## Tests
 
 ```bash
-python3 skill/no-shortcuts/scripts/test_scan.py && python3 test_install.py
+python3 skill/no-shortcuts/scripts/test_scan.py
+python3 skill/no-shortcuts/scripts/test_check_packages.py
+python3 test_install.py
 ```
 
 ## License

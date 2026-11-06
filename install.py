@@ -9,12 +9,12 @@ import shutil
 import sys
 from pathlib import Path
 
-MARKER = "no-shortcuts/scripts/scan.py"
+MARKER = "no-shortcuts/scripts/"
 SOURCE = Path(__file__).resolve().parent / "skill" / "no-shortcuts"
 
 
-def hook(mode):
-    command = f'python3 "$HOME/.claude/skills/{MARKER}" {mode}'
+def hook(script, mode=""):
+    command = f'python3 "$HOME/.claude/skills/{MARKER}{script}" {mode}'.strip()
     return {"hooks": [{"type": "command", "command": command, "timeout": 30}]}
 
 
@@ -40,7 +40,7 @@ def save_settings(path, settings):
 
 def remove_hooks(settings):
     hooks = settings.get("hooks", {})
-    for event in ("SessionStart", "Stop"):
+    for event in ("PreToolUse", "SessionStart", "Stop"):
         if event in hooks:
             hooks[event] = [entry for entry in hooks[event] if not is_ours(entry)]
             if not hooks[event]:
@@ -56,8 +56,9 @@ def install(claude_dir):
         shutil.rmtree(target)
     shutil.copytree(SOURCE, target, ignore=shutil.ignore_patterns("__pycache__"))
     hooks = settings.setdefault("hooks", {})
-    hooks.setdefault("SessionStart", []).append(hook("--session-start"))
-    hooks.setdefault("Stop", []).append(hook("--stop"))
+    hooks.setdefault("PreToolUse", []).append({"matcher": "Bash", **hook("check_packages.py")})
+    hooks.setdefault("SessionStart", []).append(hook("scan.py", "--session-start"))
+    hooks.setdefault("Stop", []).append(hook("scan.py", "--stop"))
     save_settings(settings_path, settings)
     print("Installed. It takes effect in your next Claude Code session.")
 

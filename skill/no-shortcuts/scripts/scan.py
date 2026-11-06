@@ -11,6 +11,7 @@ import re
 import subprocess
 import sys
 import time
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,17 +32,20 @@ UI = {".html", ".jsx", ".tsx", ".vue", ".svelte"}
 SKIPPED_PATH = re.compile(
     r"(^|/)(node_modules|vendor|dist|build|target|\.next|__pycache__|\.venv|venv)/|\.min\.\w+$")
 TEST_PATH = re.compile(
-    r"(^|/)(tests?|__tests__|spec|specs|e2e)/|(^|/)test_[^/]+$|_test\.\w+$|\.(test|spec)\.\w+$")
+    r"(^|/)(tests?|__tests__|spec|specs|e2e)/|(^|/)test_[^/]+$|_test\.\w+$|\.(test|spec)\.\w+$"
+    r"|_spec\.(rb|lua|luau)$|[A-Z]\w*Tests?\.(java|kt|swift|cs)$")
 WAIVER = re.compile(r"no-shortcuts-ok:\s*(\S.*)$")
+DELETION_WAIVER = re.compile(r"no-shortcuts-deleted-ok:\s*(\S.*)$")
 
 STUB = re.compile(
     r"raise NotImplementedError|new Error\(\s*[\"'`]not implemented|\bunimplemented!\(|\btodo!\("
     r"|\bTODO\b[:\s-]*implement|in a real (implementation|app|application|system|project)"
-    r"|placeholder implementation", re.I)
+    r"|placeholder implementation|\b(error|panic|fatalError)\(\s*[\"'`]not implemented"
+    r"|UnsupportedOperationException\(\s*\"not implemented|\bTODO\(\)", re.I)
 TEST_DISABLED = re.compile(
     r"\b(it|test|describe)\.(skip|only)\(|\bx(it|test|describe)\(|\bf(it|describe)\("
     r"|@pytest\.mark\.(skip|xfail)\b|\bpytest\.skip\(|@unittest\.(skip|expectedFailure)\b"
-    r"|\bt\.Skip\(|#\[ignore\]|\bSkipTest\b|\.skipTest\(")
+    r"|\bt\.Skip\(|#\[ignore\]|\bSkipTest\b|\.skipTest\(|@Disabled\b|@Ignore\b|\bXCTSkip\b")
 CHECKER_TARGETED = re.compile(
     r"#\s*type:\s*ignore\[|#\s*noqa:|eslint-disable-(next-)?line\s+[@\w]")
 CHECKER = re.compile(
@@ -53,6 +57,32 @@ PY_EXCEPT = re.compile(r"^\s*except(\s+(BaseException|Exception)(\s+as\s+\w+)?)?
 COMMENT = re.compile(r"^\s*(#|//|/\*|\*)")
 COMMENT_WORDS = re.compile(r"(#|//|/\*)\s*(.*?)\s*(\*/)?\s*(\}.*)?$")
 ASSERTION = re.compile(r"(^\s*assert\s)|\b(assert\w*|expect)\s*\(|\.should\b")
+STRICT_ASSERTION = re.compile(
+    r"assert(Equal|NotEqual|In|Raises|AlmostEqual|Greater|Less|IsNone)\w*\("
+    r"|\.(toBe|toEqual|toStrictEqual|toThrow|toContain|toHaveLength)\(|^\s*assert\s.*(==|!=|<|>|\bin\b)")
+LOOSE_ASSERTION = re.compile(
+    r"assertTrue\(|assertIsNotNone\(|\.toBeTruthy\(|\.toBeDefined\(|\.not\.toBeNull\("
+    r"|^\s*assert\s+[\w.()]+\s*(#.*)?$")
+TAUTOLOGY = re.compile(
+    r"^\s*assert\s+True\b|assertTrue\(\s*True\s*\)|expect\(\s*true\s*\)\.toBe(Truthy\(|\(\s*true\s*\))"
+    r"|^\s*assert\s+(?P<a>\d+)\s*==\s*(?P=a)\b|assertEqual\(\s*(?P<b>\d+)\s*,\s*(?P=b)\s*\)")
+CI_PATH = re.compile(
+    r"(^|/)\.github/workflows/[^/]+\.ya?ml$|(^|/)\.circleci/[^/]+\.ya?ml$|(^|/)\.gitlab-ci\.ya?ml$"
+    r"|(^|/)(azure|bitbucket)-pipelines\.ya?ml$|(^|/)Jenkinsfile$|(^|/)ci[\w.-]*\.sh$")
+TEST_COMMAND = re.compile(
+    r"\b(pytest|unittest|jest|vitest|mocha|rspec|go test|cargo test|(npm|pnpm|yarn)( run)? test"
+    r"|make test|gradle test|mvn test)\b|\bci\.sh\b")
+CI_BYPASS = re.compile(r"\|\|\s*(true\b|:\s*$|exit 0\b)|;\s*exit 0\b")
+CI_SOFT_FAIL = re.compile(
+    r"continue-on-error:\s*true|allow_failure:\s*true|^\s*exit 0\s*$|\bset \+e\b"
+    r"|--passWithNoTests|--exit-zero\b")
+TEST_WORDS = re.compile(r"\btests?\b|\bspec\b|\btest_\w+|\w+\.test\.")
+NOT_A_TEST_RUN = re.compile(r"^\s*(git|echo|cat|grep|rg|ls|sed|find|head|tail)\b")
+EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
+GO_IGNORED_ERROR = re.compile(r"^\s*_\s*=\s*err\b")
+RUBY_RESCUE_NIL = re.compile(r"\brescue\s+nil\b")
+PCALL_IGNORED = re.compile(r"^\s*pcall\(")
+RUST_UNWRAP = re.compile(r"\.unwrap\(\)")
 AS_ANY = re.compile(r"\bas any\b")
 DEBUG_JS = re.compile(r"\bconsole\.(log|debug)\(|\bdebugger;")
 DEBUG_PY = re.compile(r"\bbreakpoint\(\)|\bpdb\.set_trace\(")
@@ -64,8 +94,8 @@ def should_block(rule, is_test_file):
 
     This sets how strict the hook feels day to day.
     """
-    return rule in {"stub", "test-disabled", "assertion-deleted",
-                    "silenced-error", "checker-suppressed"}
+    return rule in {"stub", "test-disabled", "assertion-deleted", "test-tautology",
+                    "ci-bypass", "ci-step-removed", "silenced-error", "checker-suppressed"}
 
 
 @dataclass
@@ -135,7 +165,8 @@ def collect_changes(repo, base, head):
     others = git(repo, "ls-files", "--others", "--exclude-standard").stdout.splitlines()
     for name in others:
         path = Path(repo) / name
-        if path.suffix.lower() not in CODE or path.stat().st_size > MAX_FILE_BYTES:
+        wanted = path.suffix.lower() in CODE or CI_PATH.search(name)
+        if not wanted or path.stat().st_size > MAX_FILE_BYTES:
             continue
         lines = path.read_text(errors="replace").splitlines()
         added[name] = list(enumerate(lines, 1))
@@ -200,6 +231,8 @@ def rules_for_line(lines, index, suffix, is_test):
         yield "stub"
     if is_test and TEST_DISABLED.search(text):
         yield "test-disabled"
+    if is_test and TAUTOLOGY.search(text):
+        yield "test-tautology"
     if CHECKER_TARGETED.search(text):
         yield "suppression-targeted"
     elif CHECKER.search(text):
@@ -207,6 +240,12 @@ def rules_for_line(lines, index, suffix, is_test):
     silenced = silenced_error(lines, index, suffix)
     if silenced:
         yield silenced
+    if (suffix == ".go" and GO_IGNORED_ERROR.search(text)) or (suffix == ".rb" and RUBY_RESCUE_NIL.search(text)):
+        yield "silenced-error"
+    if suffix in {".lua", ".luau"} and PCALL_IGNORED.search(text):
+        yield "pcall-ignored"
+    if suffix == ".rs" and not is_test and RUST_UNWRAP.search(text):
+        yield "rust-unwrap"
     if suffix in TYPESCRIPT and AS_ANY.search(text):
         yield "as-any"
     if not is_test and ((suffix in JS_LIKE and DEBUG_JS.search(text))
@@ -216,11 +255,22 @@ def rules_for_line(lines, index, suffix, is_test):
         yield "ui-placeholder"
 
 
-def valid_waiver(text):
-    match = WAIVER.search(text)
+def valid_waiver(text, marker=WAIVER):
+    match = marker.search(text)
     if match and len(match[1].split()) >= 2:
         return match[1].strip()
     return ""
+
+
+def deletion_reasons(added):
+    """Deleted lines have nowhere to hold a waiver, so a new line in the same file carries it."""
+    reasons = {}
+    for name, lines in added.items():
+        for _, text in lines:
+            reason = valid_waiver(text, DELETION_WAIVER)
+            if reason:
+                reasons.setdefault(name, reason)
+    return reasons
 
 
 def make_finding(rule, name, line, text, is_test):
@@ -238,12 +288,52 @@ def deleted_assertions(added, removed):
     if surplus <= 0:
         return []
     unmatched = [item for item in gone if item[2].strip() not in new]
-    return [make_finding("assertion-deleted", f, n, t, True) for f, n, t in unmatched[:surplus]]
+    found = [make_finding("assertion-deleted", f, n, t, True) for f, n, t in unmatched[:surplus]]
+    return with_deletion_waivers(found, added)
+
+
+def with_deletion_waivers(found, added):
+    reasons = deletion_reasons(added)
+    for finding in found:
+        finding.reason = reasons.get(finding.file, "")
+        finding.waived = bool(finding.reason)
+    return found
+
+
+def removed_ci_steps(added, removed):
+    gone = [(f, n, t) for f, n, t in removed if CI_PATH.search(f) and TEST_COMMAND.search(t)]
+    kept = sum(1 for f, lines in added.items() if CI_PATH.search(f)
+               for _, t in lines if TEST_COMMAND.search(t))
+    surplus = len(gone) - kept
+    found = [make_finding("ci-step-removed", f, n, t, False) for f, n, t in gone[:max(surplus, 0)]]
+    return with_deletion_waivers(found, added)
+
+
+def ci_rules(text):
+    if TEST_COMMAND.search(text) and CI_BYPASS.search(text):
+        yield "ci-bypass"
+    if CI_SOFT_FAIL.search(text):
+        yield "ci-soft-fail"
+
+
+def weakened_assertions(added, removed):
+    """Warn when a file lost strict assertions and gained loose ones."""
+    lost = Counter(f for f, _, t in removed if TEST_PATH.search(f) and STRICT_ASSERTION.search(t))
+    found = []
+    for name, lines in added.items():
+        if not (TEST_PATH.search(name) and is_scanned(name)):
+            continue
+        loose = [(n, t) for n, t in lines if LOOSE_ASSERTION.search(t)]
+        found += [make_finding("assertion-weakened", name, n, t, True) for n, t in loose[:lost[name]]]
+    return found
 
 
 def scan_added(added):
     found = []
     for name, lines in added.items():
+        if CI_PATH.search(name):
+            found += [make_finding(rule, name, line_no, text, False)
+                      for line_no, text in lines for rule in ci_rules(text)]
         if not is_scanned(name):
             continue
         suffix = Path(name).suffix.lower()
@@ -258,7 +348,8 @@ def scan_repo(repo, base="HEAD", head=None):
     if base == "HEAD":
         base = head_or_empty(repo)
     added, removed = collect_changes(repo, base, head)
-    return scan_added(added) + deleted_assertions(added, removed)
+    return (scan_added(added) + deleted_assertions(added, removed)
+            + weakened_assertions(added, removed) + removed_ci_steps(added, removed))
 
 
 def code_files(root):
@@ -343,6 +434,57 @@ def comparison_base(root, entry):
     return base if still_ancestor.returncode == 0 else "HEAD"
 
 
+def without_known(found, known):
+    """Each recorded issue excuses one match, so a new copy of an old line is still new."""
+    remaining = Counter(known)
+    new = []
+    for finding in found:
+        if remaining[finding.fingerprint] > 0:
+            remaining[finding.fingerprint] -= 1
+        else:
+            new.append(finding)
+    return new
+
+
+def tool_uses(transcript_path):
+    with open(transcript_path, errors="replace") as log:
+        for line in log:
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            content = (event.get("message") or {}).get("content")
+            if event.get("type") == "assistant" and isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "tool_use":
+                        yield block.get("name"), block.get("input") or {}
+
+
+def looks_like_test_run(command):
+    if NOT_A_TEST_RUN.search(command):
+        return False
+    return bool(TEST_COMMAND.search(command) or TEST_WORDS.search(command))
+
+
+def tests_are_stale(transcript_path):
+    """True when code was edited and no test command ran after the last edit."""
+    if not transcript_path or not Path(transcript_path).exists():
+        return False
+    last_edit = last_test = -1
+    for index, (tool, details) in enumerate(tool_uses(transcript_path)):
+        if tool in EDIT_TOOLS and Path(details.get("file_path", "")).suffix.lower() in CODE:
+            last_edit = index
+        elif tool == "Bash" and looks_like_test_run(details.get("command", "")):
+            last_test = index
+    return last_edit > last_test
+
+
+def project_has_tests(root):
+    tracked = git(root, "ls-files", check=False).stdout.splitlines() if repo_root(root) else []
+    names = tracked or (relative for _, relative in code_files(root))
+    return any(TEST_PATH.search(name) for name in names)
+
+
 def notes_for_user(new):
     notes = [f"Waived {f.describe()} ({f.reason})" for f in new if f.waived]
     notes += [f"Warning {f.describe()}" for f in new if f.tier == "warn" and not f.waived]
@@ -363,10 +505,11 @@ def stop(payload):
         found = scan_folder(key, entry["since"])
     else:
         return 0
-    known = set(entry["known"])
-    new = [f for f in found if f.fingerprint not in known]
+    new = without_known(found, entry["known"])
     blocks = [f for f in new if f.tier == "block" and not f.waived]
     notes = notes_for_user(new)
+    if tests_are_stale(payload.get("transcript_path")) and project_has_tests(key):
+        notes.append("Warning: code was edited and the tests weren't run afterward.")
 
     if not blocks:
         entry.pop("guard", None)
@@ -393,7 +536,9 @@ def stop(payload):
     lines = "\n".join(f.describe() for f in blocks)
     print(f"no-shortcuts found shortcuts in code changed this session:\n{lines}\n"
           "Fix the cause. If a hit is truly correct as written, add "
-          "`no-shortcuts-ok: <reason>` on that line and tell the user why.", file=sys.stderr)
+          "`no-shortcuts-ok: <reason>` on that line and tell the user why. For a test "
+          "deletion that is truly intended, add a comment in that file with "
+          "`no-shortcuts-deleted-ok: <reason>`.", file=sys.stderr)
     return 2
 
 

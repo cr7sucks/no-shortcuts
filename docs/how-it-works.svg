@@ -52,11 +52,12 @@
 
   <rect class="box" x="40" y="310" width="250" height="260" rx="10"/>
   <text class="lane" x="58" y="342">WHAT GETS BLOCKED</text>
-  <text class="b" x="58" y="372">Stubs left in real code</text>
-  <text class="b" x="58" y="402">Skipped or disabled tests</text>
-  <text class="b" x="58" y="432">Deleted assertions</text>
-  <text class="b" x="58" y="462">Unexplained empty catches</text>
-  <text class="b" x="58" y="492">Blanket checker suppressions</text>
+  <text class="b" x="58" y="368">Stubs left in real code</text>
+  <text class="b" x="58" y="392">Skipped or hollow tests</text>
+  <text class="b" x="58" y="416">Deleted assertions</text>
+  <text class="b" x="58" y="440">Unexplained empty catches</text>
+  <text class="b" x="58" y="464">Blanket checker suppressions</text>
+  <text class="b" x="58" y="488">CI bypasses, fake packages</text>
   <text class="lane" x="58" y="530">ONLY WARNS</text>
   <text class="b" x="58" y="552">Debug prints, placeholder text</text>
   <rect class="bad" x="355" y="310" width="250" height="100" rx="10"/>
