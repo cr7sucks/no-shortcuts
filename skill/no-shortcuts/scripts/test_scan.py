@@ -176,9 +176,9 @@ class Languages(RepoCase):
          'throw new UnsupportedOperationException("read only");\n'),
         ("silenced-error", "a.go", "_ = err\n", "return err\n"),
         ("silenced-error", "a.rb", "x = f rescue nil\n", "x = f rescue default\n"),
-        ("test-disabled", "FooTest.java", "@Disabled\nvoid a() {}\n", "@Test\nvoid a() {}\n"),
-        ("test-disabled", "FooTest.kt", "@Ignore fun a() {}\n", "@Test fun a() {}\n"),
-        ("test-disabled", "FooTests.swift", 'throw XCTSkip("later")\n', 'XCTFail("later")\n'),
+        ("test-disabled", "FooTest.java", "@Disabled\nvoid a() {}\n", "@Test\nvoid a() {}\n"),  # no-shortcuts-ok: sample input for the scanner rule test
+        ("test-disabled", "FooTest.kt", "@Ignore fun a() {}\n", "@Test fun a() {}\n"),  # no-shortcuts-ok: sample input for the scanner rule test
+        ("test-disabled", "FooTests.swift", 'throw XCTSkip("later")\n', 'XCTFail("later")\n'),  # no-shortcuts-ok: sample input for the scanner rule test
     ]
 
     def test_each_language_hits_and_near_miss_does_not(self):
@@ -228,8 +228,8 @@ class WeakenedTests(RepoCase):
         self.assertNotIn("assertion-weakened", self.rules("test_a.py", "x = 1\nself.assertTrue(f())\n"))
 
     def test_tautologies_block(self):
-        for line in ("assert True\n", "self.assertTrue(True)\n", "assert 1 == 1\n",
-                     "self.assertEqual(1, 1)\n", "expect(true).toBe(true);\n"):
+        for line in ("assert True\n", "self.assertTrue(True)\n", "assert 1 == 1\n",  # no-shortcuts-ok: sample input for the scanner rule test
+                     "self.assertEqual(1, 1)\n", "expect(true).toBe(true);\n"):  # no-shortcuts-ok: sample input for the scanner rule test
             with self.subTest(line=line):
                 self.assertIn("test-tautology", self.rules("test_a.py", line, tier="block"))
 
@@ -495,6 +495,77 @@ class TestsRan(RepoCase):
         with self.log.open("a") as log:
             log.write("not json\n")
         self.assertIn("tests", self.stop_message())
+
+
+class ScannerUpdate(RepoCase):
+    """A scanner updated mid-session has rules the saved snapshot never applied."""
+
+    def setUp(self):
+        super().setUp()
+        self.plain = Path(self._tmp.name) / "plain"
+        self.plain.mkdir()
+
+    def snapshot_from_older_scanner(self, version="older"):
+        path = self.state / "s1.json"
+        state = json.loads(path.read_text())
+        for entry in state["repos"].values():
+            entry.pop("scanner", None)
+            if version:
+                entry["scanner"] = version
+        path.write_text(json.dumps(state))
+
+    def test_existing_lines_do_not_block_after_update(self):
+        self.write("a.py", "x = 1\n")
+        self.hook("--session-start", {"source": "startup"})
+        self.write("a.py", "raise NotImplementedError\n")
+        self.snapshot_from_older_scanner()
+        out = self.hook("--stop")
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("scanner was updated", out.stdout)
+
+    def test_state_saved_before_versions_existed_counts_as_older(self):
+        self.hook("--session-start", {"source": "startup"})
+        self.write("a.py", "raise NotImplementedError\n")
+        self.snapshot_from_older_scanner(version=None)
+        self.assertEqual(self.hook("--stop").returncode, 0)
+
+    def test_new_shortcut_after_update_still_blocks(self):
+        self.hook("--session-start", {"source": "startup"})
+        self.write("a.py", "raise NotImplementedError\n")
+        self.snapshot_from_older_scanner()
+        self.hook("--stop")
+        self.write("b.py", "raise NotImplementedError\n")
+        out = self.hook("--stop")
+        self.assertEqual(out.returncode, 2)
+        self.assertIn("b.py:1", out.stderr)
+
+    def test_note_appears_once(self):
+        self.hook("--session-start", {"source": "startup"})
+        self.write("a.py", "raise NotImplementedError\n")
+        self.snapshot_from_older_scanner()
+        self.assertIn("scanner was updated", self.hook("--stop").stdout)
+        self.assertNotIn("scanner was updated", self.hook("--stop").stdout)
+
+    def test_same_scanner_blocks_with_no_note(self):
+        self.hook("--session-start", {"source": "startup"})
+        self.write("a.py", "raise NotImplementedError\n")
+        out = self.hook("--stop")
+        self.assertEqual(out.returncode, 2)
+        self.assertNotIn("scanner was updated", out.stdout)
+
+    def test_no_session_start_still_blocks(self):
+        self.write("a.py", "raise NotImplementedError\n")
+        self.assertEqual(self.hook("--stop").returncode, 2)
+
+    def test_plain_folder_update(self):
+        target = self.plain / "a.py"
+        target.write_text("x = 1\n")
+        self.hook("--session-start", {"source": "startup"}, cwd=self.plain)
+        target.write_text("raise NotImplementedError\n")
+        self.snapshot_from_older_scanner()
+        self.assertEqual(self.hook("--stop", cwd=self.plain).returncode, 0)
+        (self.plain / "b.py").write_text("raise NotImplementedError\n")
+        self.assertEqual(self.hook("--stop", cwd=self.plain).returncode, 2)
 
 
 class PlainFolder(RepoCase):

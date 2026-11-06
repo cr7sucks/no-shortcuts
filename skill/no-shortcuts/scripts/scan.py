@@ -382,6 +382,10 @@ def folder_is_walkable(root):
 
 # --- Hook plumbing ---
 
+def scanner_version():
+    return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+
+
 def state_path(session_id):
     root = Path(os.environ.get("NO_SHORTCUTS_STATE_DIR", Path.home() / ".claude/no-shortcuts-state"))
     root.mkdir(parents=True, exist_ok=True)
@@ -413,10 +417,11 @@ def session_start(payload):
     key = root or str(Path(cwd).resolve())
     if key not in state["repos"]:
         if root:
-            state["repos"][key] = {"base": head_or_empty(root),
+            state["repos"][key] = {"base": head_or_empty(root), "scanner": scanner_version(),
                                    "known": [f.fingerprint for f in scan_repo(root)]}
         elif folder_is_walkable(key):
             state["repos"][key] = {"since": time.time() - MTIME_MARGIN_SECONDS,
+                                   "scanner": scanner_version(),
                                    "known": [f.fingerprint for f in scan_folder(key)]}
         else:
             print("no-shortcuts: this folder is too large to check, so the scanner is off here.")
@@ -485,6 +490,21 @@ def project_has_tests(root):
     return any(TEST_PATH.search(name) for name in names)
 
 
+def absorb_scanner_update(entry, found):
+    """New rules can flag lines the older snapshot never recorded, so the first stop
+    after an update records them. Returns the note for the user, or None."""
+    if entry.get("scanner") == scanner_version():
+        return None
+    entry["scanner"] = scanner_version()
+    unrecorded = without_known(found, entry["known"])
+    entry["known"] = entry["known"] + [f.fingerprint for f in unrecorded]
+    if not unrecorded:
+        return None
+    lines = [f"Unchecked {f.describe()}" for f in unrecorded if f.tier == "block" and not f.waived]
+    return "\n".join(["The scanner was updated during this session, so its new rules did "
+                      "not block code already there. Review these yourself:", *lines])
+
+
 def notes_for_user(new):
     notes = [f"Waived {f.describe()} ({f.reason})" for f in new if f.waived]
     notes += [f"Warning {f.describe()}" for f in new if f.tier == "warn" and not f.waived]
@@ -498,16 +518,18 @@ def stop(payload):
     state = load_state(path)
     key = root or str(Path(cwd).resolve())
     if root:
-        entry = state["repos"].setdefault(key, {"base": "HEAD", "known": []})
+        entry = state["repos"].setdefault(
+            key, {"base": "HEAD", "known": [], "scanner": scanner_version()})
         found = scan_repo(root, comparison_base(root, entry))
     elif key in state["repos"]:
         entry = state["repos"][key]
         found = scan_folder(key, entry["since"])
     else:
         return 0
+    update_note = absorb_scanner_update(entry, found)
     new = without_known(found, entry["known"])
     blocks = [f for f in new if f.tier == "block" and not f.waived]
-    notes = notes_for_user(new)
+    notes = notes_for_user(new) + ([update_note] if update_note else [])
     if tests_are_stale(payload.get("transcript_path")) and project_has_tests(key):
         notes.append("Warning: code was edited and the tests weren't run afterward.")
 
