@@ -626,7 +626,8 @@ class PlainFolder(RepoCase):
         self.assertEqual(self.stop().returncode, 0)
 
     def test_home_folder_is_never_walked(self):
-        out = self.hook_env("--session-start", {"HOME": str(self.plain)})
+        home = {"HOME": str(self.plain), "USERPROFILE": str(self.plain)}  # USERPROFILE on Windows
+        out = self.hook_env("--session-start", home)
         self.assertEqual(out.returncode, 0)
         (self.plain / "new.py").write_text("raise NotImplementedError\n")
         self.assertEqual(self.stop().returncode, 0)
