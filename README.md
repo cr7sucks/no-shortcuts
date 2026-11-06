@@ -27,6 +27,28 @@ It takes effect in your next session. Your settings are backed up to `~/.claude/
 python3 install.py --uninstall
 ```
 
+### Cursor and Codex (experimental)
+
+The same checks can run as hooks in Cursor and OpenAI Codex. Nothing changes in those tools unless you ask:
+
+```bash
+python3 install.py --agents cursor,codex
+```
+
+Your existing hooks are kept, and `--uninstall` removes only ours. Codex skips new hooks until you trust them, so run `/hooks` in Codex afterward.
+
+These adapters follow each tool's hook documentation and pass tests that simulate those hooks. **They haven't been run inside the real apps yet.** Compared with Claude Code:
+
+| | Claude Code | Cursor | Codex |
+|---|---|---|---|
+| Blocks finishing on new shortcuts | Yes | Yes, by sending a follow-up message | Yes |
+| Blocks fake package installs | Yes | Yes | Yes |
+| Tells the agent to read the rules | Yes | Yes | Yes |
+| Shows you waivers and unresolved findings | Yes | Only in Cursor's hook log | Yes |
+| Warns when tests weren't rerun | Yes | No | No |
+
+In a Cursor workspace with several root folders, only the first is scanned. Cursor's session start doesn't wait for hooks, so the first edits of a session could happen before the snapshot is saved.
+
 ## What it checks
 
 **Blocks Claude from finishing:**
@@ -93,6 +115,7 @@ Six pressure scenarios ran without the skill. Five stayed clean, including 36 te
 ```bash
 python3 skill/no-shortcuts/scripts/test_scan.py
 python3 skill/no-shortcuts/scripts/test_check_packages.py
+python3 skill/no-shortcuts/scripts/test_bridge.py
 python3 test_install.py
 ```
 
