@@ -5,7 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -626,10 +626,24 @@ class PlainFolder(RepoCase):
         self.assertEqual(self.stop().returncode, 0)
 
     def test_home_folder_is_never_walked(self):
-        out = self.hook_env("--session-start", {"HOME": str(self.plain)})
+        home = {"HOME": str(self.plain), "USERPROFILE": str(self.plain)}  # USERPROFILE on Windows
+        out = self.hook_env("--session-start", home)
         self.assertEqual(out.returncode, 0)
         (self.plain / "new.py").write_text("raise NotImplementedError\n")
         self.assertEqual(self.stop().returncode, 0)
+
+    def test_disk_roots_are_recognized_on_any_system(self):
+        for path in (PurePosixPath("/"), PureWindowsPath("C:/"), PureWindowsPath("D:/"),
+                     PureWindowsPath("//server/share/")):
+            with self.subTest(path=path):
+                self.assertTrue(scan.is_disk_root(path))
+        for path in (PurePosixPath("/tmp"), PureWindowsPath("C:/Users"),
+                     PureWindowsPath("//server/share/code")):
+            with self.subTest(path=path):
+                self.assertFalse(scan.is_disk_root(path))
+
+    def test_this_systems_disk_root_is_never_walked(self):
+        self.assertFalse(scan.folder_is_walkable(Path(Path.cwd().anchor)))
 
     def hook_env(self, mode, extra):
         payload = {"session_id": "s1", "cwd": str(self.plain), "source": "startup"}

@@ -373,8 +373,14 @@ def scan_folder(root, since=0):
     return scan_added(added)
 
 
+def is_disk_root(path):
+    """Only a disk root, such as / or C:\\, is its own parent."""
+    return path == path.parent
+
+
 def folder_is_walkable(root):
-    if Path(root).resolve() in (Path.home().resolve(), Path("/")):
+    resolved = Path(root).resolve()
+    if resolved == Path.home().resolve() or is_disk_root(resolved):
         return False
     limit = int(os.environ.get("NO_SHORTCUTS_MAX_FILES", MAX_WALK_FILES))
     return sum(1 for _ in zip(code_files(root), range(limit + 1))) <= limit
